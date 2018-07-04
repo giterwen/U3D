@@ -1,0 +1,164 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEditor;
+using Spine.Unity;
+using Spine.Unity.Editor;
+
+enum SpineImportType
+{
+    SkeletonAnimator,
+    SkeletonAnimation,
+    SkeletonGraphic,
+}
+public class SpineEditorTool : EditorWindow {
+    int selectTypeIndex, selectPathIndex;
+    int[] intTypeArray = new int[] { 0, 1, 2, 3};
+    string[] importTypeArray = new string[] { "SkeletonAnimator", "SkeletonAnimation", "SkeletonGraphic"};
+    string outputPath = "Assets/Content/Prefab/SpineDynamic";
+    string inputPath1 = "";
+    string inputPath2 = "";
+    string attachmentName = "";
+    string exportPath = "";
+
+    [MenuItem("Tools/Spine Prefab 导出")]
+    private static void Init()
+    {
+        SpineEditorTool window = (SpineEditorTool)GetWindow(typeof(SpineEditorTool), true, "Spine导出设置");
+    }
+
+    private void OnGUI()
+    {
+        GUILayout.BeginArea(new Rect(10, 10, 500, 400));
+        GUILayout.Label("导入主资源具体路径:", EditorStyles.boldLabel);
+        if (GUILayout.Button(inputPath1 == string.Empty ? "Assets/Content/Art/Spine/SpineDynamic" : inputPath1))
+        {
+            inputPath1 = EditorUtility.OpenFilePanel("OpenFilePanel", inputPath1, "");
+            inputPath1 = GetCorrectPath(inputPath1);
+            if (string.IsNullOrEmpty(inputPath1))
+            {
+                Debug.LogError("导入主资源路径为空！！！");
+            }
+        }
+        GUILayout.Label("需要在Spine上附加的骨骼位置:", EditorStyles.boldLabel);
+        attachmentName = GUILayout.TextField(attachmentName);
+        GUILayout.Label("导入附加资源具体路径:", EditorStyles.boldLabel);
+        if (GUILayout.Button(inputPath2 == string.Empty ? "" : inputPath2))
+        {
+            inputPath2 = EditorUtility.OpenFilePanel("OpenFilePanel", inputPath2, "");
+            inputPath2 = GetCorrectPath(inputPath2);
+        }
+        GUILayout.Label("导出路径:", EditorStyles.boldLabel);
+        if (GUILayout.Button(outputPath == string.Empty ? "" : outputPath))
+        {
+            outputPath = EditorUtility.SaveFolderPanel("Save folder", outputPath, "");
+            outputPath = GetCorrectPath(outputPath);
+            if (string.IsNullOrEmpty(outputPath))
+            {
+                Debug.LogError("导出资源路径为空！！！");
+            }
+        }
+        selectTypeIndex = EditorGUILayout.IntPopup("选择类型:", selectTypeIndex, importTypeArray, intTypeArray);
+        if (GUILayout.Button("导出Spine预设体", GUILayout.Width(200), GUILayout.Height(80)))
+        {
+            SkeletonDataAsset mainAsset = AssetDatabase.LoadAssetAtPath<SkeletonDataAsset>(inputPath1);
+            SkeletonDataAsset attachAsset = null;
+            if (mainAsset == null)
+            {
+                Debug.LogError("没有加载出对应的主资源SkeletonData Asset！！！");
+                return;
+            }
+            if (!string.IsNullOrEmpty(inputPath2))
+            {
+                attachAsset = AssetDatabase.LoadAssetAtPath<SkeletonDataAsset>(inputPath2);
+                if (attachAsset == null)
+                {
+                    Debug.LogError("没有加载出对应的附加资源SkeletonData Asset！！！");
+                    return;
+                }
+            }
+            GameObject go = CreateMainSpine(mainAsset);
+            CreateAttachSpine(go, attachAsset);
+            exportPath = string.Format("{0}/{1}.prefab", outputPath, go.name);
+            Object ob = PrefabUtility.CreateEmptyPrefab(exportPath);
+            PrefabUtility.ReplacePrefab(go, ob);
+            GameObject.DestroyImmediate(go);//销毁Hierarchy面板上的物体
+        }
+        GUILayout.EndArea();
+    }
+
+    //创建主要的spine
+    GameObject CreateMainSpine(SkeletonDataAsset mainAsset)
+    {
+        GameObject go = null;
+        switch ((SpineImportType)selectTypeIndex)
+        {
+            case SpineImportType.SkeletonAnimation:
+                go = SpineEditorUtilities.InstantiateSkeletonAnimation(mainAsset).gameObject;
+                break;
+            case SpineImportType.SkeletonAnimator:
+                go = SpineEditorUtilities.InstantiateSkeletonAnimator(mainAsset).gameObject;
+                break;
+            case SpineImportType.SkeletonGraphic:
+                go = SkeletonGraphicInspector.InstantiateSkeletonGraphic(mainAsset).gameObject;
+                break;
+            default:
+                break;
+        }
+        go.name = mainAsset.name;
+        go.name = go.name.Replace("_SkeletonData", "");
+        go.layer = LayerMask.NameToLayer("UI");
+        return go;
+    }
+
+    //创建附加的spine
+    void CreateAttachSpine(GameObject mainGo,SkeletonDataAsset attachAsset)
+    {
+        if (attachAsset != null)
+        {
+            GameObject attachgo = null;
+            switch ((SpineImportType)selectTypeIndex)
+            {
+                case SpineImportType.SkeletonAnimation:
+                    attachgo = SpineEditorUtilities.InstantiateSkeletonAnimation(attachAsset).gameObject;
+                    break;
+                case SpineImportType.SkeletonAnimator:
+                    attachgo = SpineEditorUtilities.InstantiateSkeletonAnimator(attachAsset).gameObject;
+                    break;
+                case SpineImportType.SkeletonGraphic:
+                    attachgo = SkeletonGraphicInspector.InstantiateSkeletonGraphic(attachAsset).gameObject;
+                    break;
+                default:
+                    break;
+            }
+            attachgo.GetComponent<Renderer>().sortingOrder = 1;
+            attachgo.name = attachAsset.name;
+            attachgo.name = attachgo.name.Replace("_SkeletonData", "");
+            attachgo.layer = LayerMask.NameToLayer("UI");
+            SkeletonUtility skeletonUtility = mainGo.AddComponent<SkeletonUtility>();
+            GameObject skeletonUtilityGo = skeletonUtility.SpawnHierarchy(SkeletonUtilityBone.Mode.Follow, true, true, true);
+            skeletonUtility.UpdateAllBones();
+            Transform attachmentTrans = skeletonUtilityGo.transform.FindChildRecursively(attachmentName);
+            if (attachmentTrans == null)
+            {
+                Debug.LogError("没有找到相应的" + attachmentName);
+                return;
+            }
+            GameObject attachmentOverride = new GameObject(attachmentName + "Override");
+            attachmentOverride.transform.parent = attachmentTrans.parent;
+            attachmentOverride.transform.localPosition = attachmentTrans.localPosition;
+            attachmentOverride.transform.localRotation = attachmentTrans.localRotation;
+            attachmentOverride.transform.localScale = attachmentTrans.localScale;
+            SkeletonUtilityBone bone = attachmentTrans.GetComponent<SkeletonUtilityBone>();
+            bone.mode = SkeletonUtilityBone.Mode.Override;
+            attachmentTrans.localPosition += new Vector3(1000, 0, 0);
+            attachgo.transform.parent = attachmentOverride.transform;
+        }
+    }
+
+    //获取编辑器模式下正确的路径
+    string GetCorrectPath(string path)
+    {
+        return path.Replace(Application.dataPath, "Assets");
+    }
+}
