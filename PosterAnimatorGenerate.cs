@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -10,6 +11,7 @@ public class PosterAnimationData
     public int ID;
     public int AvatarID;
     public string Name;
+    public int AnimationID;
     public int Set;
     public string AnimationClip;
     public string Parameter;
@@ -21,7 +23,7 @@ public class PosterAnimationData
 
 public class PosterAnimatorGenerate : EditorWindow
 {
-    private const string AnimatorSavePath = "Assets/Develop/Art/Animators/Poster/";
+    private const string AnimatorSavePath = "Assets/Develop/Art/Roles/Character/";
     private const string AnimatorConfigPath = "Assets/Develop/Lua/Config/Table_SecretaryAnimation.lua";
     private const string AnimatorClipPrefix = "Assets/Develop/Art/Roles/Character/";
     private const string AnimatorClipInfix = "/Dynamic/Poster/Animation/";
@@ -29,7 +31,14 @@ public class PosterAnimatorGenerate : EditorWindow
     private const string PosterPrefabPath = "Assets/Resources/Prefabs/Roles/Character/";
 
     private static string characterName = "";
-    private static int cur_set = 0;
+    private static int cur_set = 0; //当前套装
+    private static string prefab_path = "";
+
+    private static float frameRate = 30f;//动画帧率
+    private static string[] expression_list = {"Common_Angry", "Common_Smiling", "Common_Suprised", "Common_Sad", "Common_Happy"};
+    private static string[] mouse_list = {"a", "e", "ih", "o", "ou"};
+    private static AnimationCurve target_curve = AnimationCurve.Linear(0, 0, 15 / frameRate, 100);
+    private static AnimationCurve other_curve = AnimationCurve.Linear(0, 0, 15 / frameRate, 0);
 
     private static Dictionary<int, PosterAnimationData> animationDic = new Dictionary<int, PosterAnimationData>();
     private static Dictionary<int, List<PosterAnimationData>> posterDic = new Dictionary<int, List<PosterAnimationData>>();
@@ -83,6 +92,7 @@ public class PosterAnimatorGenerate : EditorWindow
         posterAnimationDatas = _posterAnimationDatas;
         characterName = posterAnimationDatas[0].Name;
         cur_set = posterAnimationDatas[0].Set;
+        prefab_path = PosterPrefabPath + characterName + "/P_"+ characterName + cur_set + "_Poster_HQ.prefab";
     }
 
     //单个导出
@@ -90,10 +100,13 @@ public class PosterAnimatorGenerate : EditorWindow
     {
         CreateController();
         AddParameters();
+        FaceAnimationGenerate();
         CreateAnimStates();
         BindControllerToPrefab();
     }
 
+
+    //加载解析看板娘所需配置
     static void LoadConfig()
     {
         animationDic.Clear();
@@ -120,11 +133,131 @@ public class PosterAnimatorGenerate : EditorWindow
         }
     }
 
+    //创建AnimatorController
     static void CreateController()
     {
-        productController = AnimatorController.CreateAnimatorControllerAtPath(AnimatorSavePath + characterName + AnimatorControllerSuffix);
+        string path = AnimatorSavePath + characterName + "/Set" + cur_set + "/Dynamic/Poster/Animation/" + characterName + AnimatorControllerSuffix;
+        productController = AnimatorController.CreateAnimatorControllerAtPath(path);
+        productController.layers = null;
+        productController.AddLayer("Default");
+        productController.AddLayer("Face");//表情层
+        productController.parameters = null;
+        var layers = productController.layers;
+
+        layers[0].defaultWeight = 1;
+        layers[0].blendingMode = AnimatorLayerBlendingMode.Override;
+        layers[1].defaultWeight = 1;
+        layers[1].blendingMode = AnimatorLayerBlendingMode.Additive;
+        productController.layers = layers;
+
+        // var layer = new UnityEditor.Animations.AnimatorControllerLayer
+        // {
+        //     name = "Face",
+        //     defaultWeight = 1f,
+        //     blendingMode = AnimatorLayerBlendingMode.Additive,
+        //     stateMachine = new UnityEditor.Animations.AnimatorStateMachine() // Make sure to create a StateMachine as well, as a default one is not created
+        // };
+        // productController.AddLayer("Face");
+        // productController.AddLayer(layer);
+
     }
 
+    //表情动画生成
+    static void FaceAnimationGenerate()
+    {
+        AnimatorStateMachine stateMachine = productController.layers[1].stateMachine;
+        AnimatorState idle_state = stateMachine.AddState("Idle", new Vector2(0, 300));
+
+        Vector2 position = new Vector2(400, 0);
+        SkinnedMeshRenderer face_renderer = null;
+        GameObject obj = AssetDatabase.LoadAssetAtPath<GameObject>(prefab_path);
+        SkinnedMeshRenderer[] renderers = obj.GetComponentsInChildren<SkinnedMeshRenderer>();
+        foreach (var item in renderers)
+        {
+            if (item.name.Contains("face") || item.name.Contains("Face"))
+            {
+                face_renderer = item;
+                break;
+            }
+        }
+        Mesh sharedMesh = face_renderer.sharedMesh;
+
+        string idle_path = AnimatorClipPrefix + characterName + "/Set" + cur_set 
+            + AnimatorClipInfix + characterName + cur_set + "_Poster_Common_Idle.anim";
+        AnimationClip idle_clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(idle_path);
+        bool is_idle_clip_exist = idle_clip != null;
+        if (!is_idle_clip_exist)
+        {
+            idle_clip = new AnimationClip();
+        }
+        for (int j = 0; j < sharedMesh.blendShapeCount; j++)
+        {
+            string name = sharedMesh.GetBlendShapeName(j);
+            string propertyName = "blendShape." + name;
+            idle_clip.SetCurve(face_renderer.name, typeof(SkinnedMeshRenderer), propertyName, other_curve);
+        }
+        if (is_idle_clip_exist)
+        {
+            EditorUtility.SetDirty(idle_clip);
+        }
+        else
+        {
+            AssetDatabase.CreateAsset(idle_clip, idle_path);
+        }
+        idle_state.motion = idle_clip;
+
+        for (int i = 0; i < expression_list.Length; i++)
+        {
+            string clip_Path = AnimatorClipPrefix + characterName + "/Set" + cur_set 
+            + AnimatorClipInfix + characterName + cur_set + "_Poster_"+ expression_list[i] + ".anim";
+            AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clip_Path);
+            bool is_clip_exist = clip != null;
+            if (!is_clip_exist)
+            {
+                clip = new AnimationClip();
+            }
+            string expression = "R_" + characterName + cur_set + "_" + expression_list[i];
+            for (int j = 0; j < sharedMesh.blendShapeCount; j++)
+            {
+                string name = sharedMesh.GetBlendShapeName(j);
+                string propertyName = "blendShape." + name;
+                if (name.Equals(expression))
+                {
+                    clip.SetCurve(face_renderer.name, typeof(SkinnedMeshRenderer), propertyName, target_curve);
+                }
+                else if(Array.IndexOf(mouse_list, name) == -1)
+                {
+                    clip.SetCurve(face_renderer.name, typeof(SkinnedMeshRenderer), propertyName, other_curve);
+                }  
+            }
+            if (is_clip_exist)
+            {
+                EditorUtility.SetDirty(clip);
+            }
+            else
+            {
+                AssetDatabase.CreateAsset(clip, clip_Path);
+            }
+            
+            position.y = 130*i;
+            AnimatorState state_1 = stateMachine.AddState(clip.name, position);
+            state_1.motion = clip;
+            AnimatorStateTransition transition_1 = idle_state.AddTransition(state_1);
+            transition_1.AddCondition(AnimatorConditionMode.If, 0, expression_list[i]);
+
+            AnimatorStateTransition transition_2 = state_1.AddTransition(idle_state);
+            transition_2.AddCondition(AnimatorConditionMode.If, 0, expression_list[i] + "_reverse");
+
+            position.y = 130*i + 60;
+            AnimatorState state_2 = stateMachine.AddState(clip.name + "_reverse", position);
+            state_2.motion = clip;
+            state_2.speed = -1;
+        }
+        EditorUtility.SetDirty(productController);
+        // AssetDatabase.Refresh();
+    }
+
+    //AnimatorController添加Parameters
     static void AddParameters()
     {
         HashSet<string> hashSet = new HashSet<string>();
@@ -141,6 +274,11 @@ public class PosterAnimatorGenerate : EditorWindow
             }
         }
         hashSet.Clear();
+        for (int i = 0; i < expression_list.Length; i++)
+        {
+            productController.AddParameter(expression_list[i], AnimatorControllerParameterType.Trigger);
+            productController.AddParameter(expression_list[i] + "_reverse", AnimatorControllerParameterType.Trigger);
+        }
     }
 
     static void CreateAnimStates()
@@ -162,15 +300,19 @@ public class PosterAnimatorGenerate : EditorWindow
             {
                 position = new Vector2(800, 80 * i);
             }
-            else if (posterAnimationDatas[i].AnimationClip.Contains("Show"))
+            else if (posterAnimationDatas[i].AnimationClip.Contains("MainInShow"))
             {
                 position = new Vector2(400, 200);
+            }
+            else
+            {
+                position = new Vector2(0, 80 * i);
             }
             AnimatorState state = stateMachine.AddState(posterAnimationDatas[i].AnimationClip, position);
             state.motion = clip;
             if (posterAnimationDatas[i].NeedEndEvent)
             {
-                state.AddStateMachineBehaviour<PosterBehaviour>();
+                state.AddStateMachineBehaviour<PosterStateExitBehaviour>();
             }
             if (posterAnimationDatas[i].IsDefaultIdle)
             {
@@ -182,7 +324,7 @@ public class PosterAnimatorGenerate : EditorWindow
         {
             for (int j = 0; j < posterAnimationDatas[i].ToStateArray.Length; j++)
             {
-                int to_index = GetAnimatorState(posterAnimationDatas[i].ToStateArray[j]);
+                int to_index = GetToStateRealIndex(posterAnimationDatas[i].ToStateArray[j]);
                 AnimatorStateTransition transition = state_list[i].AddTransition(state_list[to_index]);
                 if (!string.IsNullOrEmpty(posterAnimationDatas[to_index].Parameter))
                 {
@@ -196,13 +338,16 @@ public class PosterAnimatorGenerate : EditorWindow
                 }
             }
         }
+
+        EditorUtility.SetDirty(productController);
+        AssetDatabase.SaveAssets();
     }
 
-    static int GetAnimatorState(int index)
+    static int GetToStateRealIndex(int index)
     {
         for (int i = 0; i < posterAnimationDatas.Count; i++)
         {
-            if (posterAnimationDatas[i].ID == index)
+            if (posterAnimationDatas[i].AnimationID == index)
             {
                 return i;
             }
@@ -212,8 +357,7 @@ public class PosterAnimatorGenerate : EditorWindow
 
     static void BindControllerToPrefab()
     {
-        string path = PosterPrefabPath + characterName + "/P_"+ characterName + cur_set + "_Poster_HQ.prefab";
-        GameObject prefab = AssetDatabase.LoadAssetAtPath(path, typeof(GameObject)) as GameObject;
+        GameObject prefab = AssetDatabase.LoadAssetAtPath(prefab_path, typeof(GameObject)) as GameObject;
         GameObject obj = Instantiate(prefab);
         GameObject body = obj.transform.GetChild(0).GetChild(0).gameObject;
         Animator animator = body.GetComponent<Animator>();
@@ -222,7 +366,7 @@ public class PosterAnimatorGenerate : EditorWindow
             animator = body.AddComponent<Animator>();
         }
         animator.runtimeAnimatorController = productController;
-        PrefabUtility.SaveAsPrefabAsset(obj, path);
+        PrefabUtility.SaveAsPrefabAsset(obj, prefab_path);
         DestroyImmediate(obj);
     }
 
